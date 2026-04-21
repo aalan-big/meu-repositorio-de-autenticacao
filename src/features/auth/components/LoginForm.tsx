@@ -1,71 +1,69 @@
-/**
+
+/*
  * ARQUIVO: Componente de Formulário de Login (Front-end)
- * POSIÇÃO: Camada de Interface (View / Client Component)
- * FUNÇÃO: Capturar o que o usuário digita, enviar para a API e 
- * dar um retorno visual (erro ou sucesso).
+ * POSIÇÃO: src/features/auth/components/LoginForm.tsx
+ * FUNÇÃO: Captura dados, envia para a API e SALVA o usuário no navegador.
  */
 
-'use client'  // Indica que este código roda no navegador do usuário (interativo)
+'use client'
 
 import { useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 
-// Interface para organizar os dados que o formulário armazena
 interface LoginFormState {
   email: string
   senha: string
 }
 
 export function LoginForm() {
-  const router = useRouter()// Ferramenta para mudar de página (redirecionar)
+  const router = useRouter()
+  const [form, setForm] = useState<LoginFormState>({ email: '', senha: '' })
+  const [loading, setLoading] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
 
-  // ESTADOS (Hooks): São as "memórias" temporárias da tela
-  const [form, setForm] = useState<LoginFormState>({ email: '', senha: '' })// Guarda o texto digitado
-  const [loading, setLoading] = useState(false) // Controla se o botão mostra "Entrando..."
-  const [erro, setErro] = useState<string | null>(null) // Guarda mensagens de erro para mostrar ao usuário
-
-  // FUNÇÃO DE ENVIO: Disparada quando o usuário clica no botão ou dá Enter
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault() // Impede que a página recarregue (padrão do HTML)
-    setLoading(true) // Liga o "LED" de processamento
-    setErro(null) // Limpa erros de tentativas anteriores
+    e.preventDefault()
+    setLoading(true)
+    setErro(null)
 
     try {
-      // COMUNICAÇÃO: Envia os dados para a "ponte" que criamos (API Route)
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form), // Transforma o objeto em texto para a viagem
+        body: JSON.stringify(form),
       })
 
       const data = await res.json()
 
-      // VERIFICAÇÃO: Se o servidor disse que algo deu errado (ex: senha incorreta)
       if (!res.ok) {
         setErro(data.erro || 'Erro ao fazer login.')
         return
       }
 
-      // SUCESSO: Se chegou aqui, o login deu certo. Manda o usuário para o Dashboard.
+      // ============================================================
+      // AQUI É ONDE O NOME DO ALAN É SALVO!
+      // Se a API retornou o campo 'usuario' com o nome, nós guardamos.
+      // ============================================================
+      if (data.user) {
+        localStorage.setItem('user_data', JSON.stringify(data.user))
+      }
+
       router.push('/dashboard')
     } catch {
-      // ERRO DE REDE: Caso a internet caia ou o servidor esteja desligado
       setErro('Erro ao conectar com o servidor.')
     } finally {
-      setLoading(false) // Desliga o "LED" de processamento independente do resultado
+      setLoading(false)
     }
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* ALERTA DE ERRO: Só aparece se o estado 'erro' tiver algum texto */}
       {erro && (
         <div className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 px-4 py-3 rounded-lg text-sm">
           {erro}
         </div>
       )}
 
-      {/* CAMPO DE E-MAIL */}
       <div>
         <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">
           E-mail
@@ -80,7 +78,6 @@ export function LoginForm() {
         />
       </div>
 
-      {/* CAMPO DE SENHA */}  
       <div>
         <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">
           Senha
@@ -95,7 +92,6 @@ export function LoginForm() {
         />
       </div>
 
-      {/* BOTÃO DE AÇÃO: Muda de cor e trava enquanto 'loading' for verdadeiro */}
       <button
         type="submit"
         disabled={loading}

@@ -102,7 +102,11 @@ function SecaoCadastro() {
   )
 }
 
-function SecaoLogin() {
+interface SecaoLoginProps {
+  onLogin?: (user: { nome: string; email: string }) => void
+}
+
+function SecaoLogin({ onLogin }: SecaoLoginProps) {
   const [form, setForm] = useState<LoginForm>({ email: '', senha: '' })
   const [response, setResponse] = useState<ApiResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -117,6 +121,11 @@ function SecaoLogin() {
       })
       const data = await res.json()
       setResponse({ status: res.status, statusText: res.statusText, ok: res.ok, payload: data })
+
+      // Se o login foi bem-sucedido e veio dados do usuário, notifica o pai
+      if (res.ok && data?.data?.user) {
+        onLogin?.(data.data.user)
+      }
     } catch (err) {
       setResponse({ error: 'Falha na conexão com a API', ok: false, payload: err instanceof Error ? err.message : String(err) })
     } finally {
@@ -159,11 +168,15 @@ function SecaoLogin() {
   )
 }
 
-export function TemaLogin() {
+interface TemaLoginProps {
+  onLogin?: (user: { nome: string; email: string }) => void
+}
+
+export function TemaLogin({ onLogin }: TemaLoginProps) {
   return (
     <>
       <SecaoCadastro />
-      <SecaoLogin />
+      <SecaoLogin onLogin={onLogin} />
     </>
   )
 }

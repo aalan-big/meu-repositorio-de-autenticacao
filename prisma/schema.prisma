@@ -1,3 +1,46 @@
+// ============================================================
+// SCHEMA PRISMA — Plataforma ADM Start Big
+// Versão: 2.0 — Ecossistema Completo
+// ============================================================
+//
+// MAPA DE ENTIDADES E RELACIONAMENTOS:
+//
+//   Plano ──────────────────────────────────────────────────┐
+//   Parceiro ──────────────────────────────────────────┐    │
+//   Usuario ──────────────────────────────────────┐    │    │
+//                                                 │    │    │
+//                                     Log ←───────┘    │    │
+//                                                      │    │
+//   Parceiro ←──────────────────────────────────────────────┤
+//                                                      │    │
+//   Cliente ←──────────────────────────── (planoId) ───┘    │
+//     │  │  │                             (parceiroId) ──────┘
+//     │  │  ├──→ ClientePF
+//     │  │  ├──→ ClientePJ
+//     │  │  ├──→ Endereco
+//     │  │  └──→ Licenca (dispositivo autorizado)
+//     │  │            └──→ Parceiro (quem vendeu a licença)
+//     │  └──→ (parceiroId) Parceiro
+//     └──→ (planoId) Plano
+//
+// GLOSSÁRIO DO NEGÓCIO:
+//   Plano       → Catálogo de planos com preços e limites (ex: Start, Premium)
+//   Parceiro    → Revendedor/consultor que vende ao cliente final
+//   Cliente     → Empresa ou pessoa que assina o serviço
+//   Licenca     → Um dispositivo autorizado a usar o software (chave de ativação)
+//   Usuario     → Funcionário interno da BigTec que acessa o painel ADM
+//   Log         → Registro imutável de todas as ações do sistema (auditoria)
+//
+// ESTRATÉGIA DE MIGRAÇÃO (plano → planoId):
+//   Os campos 'plano: String' e 'parceiro: String' existem no Cliente
+//   desde a v1.0 e todo o código atual os usa. Para não quebrar o sistema,
+//   mantemos esses campos E adicionamos 'planoId' e 'parceiroId' como
+//   opcionais. Quando o módulo de Planos e Parceiros estiver completo no
+//   frontend, o código será atualizado para usar os FKs e os campos de
+//   texto serão removidos em uma nova migration.
+//
+// ============================================================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,18 +50,441 @@ datasource db {
 }
 
 
-//Tabela Usuario
+// ============================================================
+// ENTIDADE: Plano
+// ============================================================
+// Catálogo de planos disponíveis na plataforma.
+// Cada plano define o que o cliente pode usar (módulos),
+// quantos dispositivos pode ativar (limiteLicencas) e o preço.
+//
+// Relação: Um Plano pode ter zero ou muitos Clientes.
+// ============================================================
+model Plano {
+  id                    String   @id @default(uuid())
+
+  // Nome comercial do plano (Start, Premium, Enterprise...)
+  nome                  String   @unique
+
+  // Quantos dispositivos/licenças o plano inclui por padrão
+  limiteLicencas        Int      @default(1)
+
+  // Preço base de assinatura mensal em reais
+  precoMensal           Decimal  @db.Decimal(10, 2)
+
+  // Lista de módulos que este plano desbloqueia.
+  // Armazenado como array PostgreSQL (ex: ["clientes", "dispositivos", "financeiro"])
+  // O backend verifica esta lista para permitir ou bloquear acesso aos módulos.
+  modulosLiberados      String[]
+
+  // Cobra por licença adicional além do limite do plano?
+  valorLicencaAdicional Decimal? @db.Decimal(10, 2)
+
+  // Quantos dias de trial gratuito ao ativar um novo cliente neste plano
+  periodoTrialDias      Int      @default(0)
+
+  // Plano ativo no catálogo? Inativo = não aceita novos clientes, mas mantém os existentes
+  ativo                 Boolean  @default(true)
+
+  criadoEm              DateTime @default(now())
+
+  // Clientes que usam este plano (via FK planoId no Cliente)
+  clientes              Cliente[]
+
+  @@map("planos")
+}
+
+
+// ============================================================
+// ENTIDADE: Parceiro
+// ============================================================
+// Representa um revendedor, consultor ou agente de vendas
+// que comercializa a plataforma para os clientes finais.
+//
+// Relações:
+//   - Um Parceiro tem zero ou muitos Clientes (que ele vendeu)
+//   - Um Parceiro tem zero ou muitas Licencas (que ele gerencia)
+//   - Um Parceiro tem zero ou muitos Usuarios (funcionários do parceiro)
+// ============================================================
+model Parceiro {
+  id                 String   @id @default(uuid())
+
+  // Nome comercial do parceiro/revendedor
+  nomeParceiro       String
+
+  // CNPJ ou CPF do parceiro (sem formatação, apenas dígitos)
+  documento          String?
+
+  // Percentual de comissão sobre cada venda (ex: 15.00 = 15%)
+  comissaoPercentual Decimal? @db.Decimal(5, 2)
+
+  // Contato principal do parceiro para comunicação
+  contatoCelular     String?
+
+  // Cidade onde o parceiro opera (base de atuação)
+  cidadeBase         String?
+
+  // Parceiro ativo no sistema? Inativo = não pode vender novas licenças
+  ativo              Boolean  @default(true)
+
+  criadoEm           DateTime @default(now())
+
+  // Relacionamentos reversos (Prisma precisa desses para montar as queries)
+  clientes           Cliente[]  // clientes cadastrados por este parceiro
+  licencas           Licenca[]  // licenças que este parceiro gerencia
+  usuarios           Usuario[]  // funcionários/usuários deste parceiro
+
+  @@map("parceiros")
+}
+
+
+// ============================================================
+// ENTIDADE: Usuario
+// ============================================================
+// Funcionário interno da BigTec ou colaborador de um Parceiro
+// que acessa o painel administrativo.
+//
+// Cargo define o nível de acesso:
+//   ADMIN      → acesso total
+//   SUPORTE    → acesso operacional (sem financeiro/configurações)
+//   FINANCEIRO → acesso ao módulo financeiro
+//   PARCEIRO   → acesso limitado aos seus próprios clientes
+//
+// Relações:
+//   - Pode pertencer a um Parceiro (parceiroId opcional)
+//   - Gera registros de Log em suas ações
+// ============================================================
 model Usuario {
-  id        String   @id @default(uuid()) 
-  nome      String
-  email     String   @unique
-  senha     String
-  cargo     String   @default("ADMIN")
-  ativo     Boolean  @default(true)
-  criadoEm  DateTime @default(now())
+  id          String   @id @default(uuid())
+  nome        String
+  email       String   @unique
+  senha       String
+
+  // Cargo determina permissões no sistema
+  cargo       String   @default("ADMIN")
+
+  // Se este usuario pertence a um parceiro, registra qual.
+  // null = funcionário interno da BigTec
+  parceiroId  String?
+
+  ativo       Boolean  @default(true)
+  criadoEm    DateTime @default(now())
+
+  parceiro    Parceiro? @relation(fields: [parceiroId], references: [id])
+  logs        Log[]     // trilha de auditoria das ações deste usuario
 
   @@map("usuarios")
 }
 
 
-//Tabela Cliente ...
+// ============================================================
+// ENTIDADE: Cliente (Base)
+// ============================================================
+// Entidade central do sistema. Representa qualquer cliente da
+// plataforma, seja Pessoa Física (PF) ou Jurídica (PJ).
+//
+// DESIGN EM TRÊS CAMADAS:
+//   1. Cliente (esta tabela) — campos comuns a todos
+//   2. ClientePF / ClientePJ — campos específicos do tipo
+//   3. Licenca[] — dispositivos autorizados para este cliente
+//
+// CAMPOS DE CONTROLE:
+//   - licencas (Int)    → slots comprados (quantos dispositivos pode ativar)
+//   - usuariosAtivos    → usuários realmente usando agora (trava downgrade)
+//   - bloqueioManual    → admin pode bloquear o acesso sem desativar a conta
+//   - isTrial          → cliente em período de teste
+//   - diasCortesia     → dias extras após vencimento antes de bloquear
+//
+// MIGRAÇÃO v1 → v2:
+//   Os campos 'plano' e 'parceiro' (String) continuam por compatibilidade
+//   com o código atual. Os novos campos 'planoId' e 'parceiroId' (FK)
+//   serão usados pelos módulos futuros de Planos e Parceiros.
+// ============================================================
+model Cliente {
+  id               String     @id @default(uuid())
+
+  // 'PF' ou 'PJ' — determina qual tabela de extensão usar
+  tipo             String
+
+  // Pessoa de contato direto (para PJ = nome do responsável)
+  contato          String
+
+  // E-mail principal — indexado para busca rápida de duplicatas
+  email            String
+
+  // ── Campos de compatibilidade v1 (texto livre) ──────────────
+  // Mantidos enquanto o frontend não usa planoId/parceiroId
+  plano            String     @default("Start")    // ex: "Start", "Premium"
+  parceiro         String                           // ex: "BigTec Iguatu"
+
+  // ── Novos campos FK para módulos Plano e Parceiro (v2) ──────
+  // Opcionais por ora — serão preenchidos quando os módulos estiverem prontos
+  planoId          String?    // → Plano.id
+  parceiroId       String?    // → Parceiro.id
+
+  // ── Licenças e uso ──────────────────────────────────────────
+  // licencas = slots comprados pelo cliente (quantos dispositivos pode ativar)
+  licencas         Int        @default(1)
+
+  // Contador de usuários/dispositivos ATUALMENTE em uso.
+  // Incrementado pelo módulo de dispositivos. Trava redução de licencas abaixo deste valor.
+  usuariosAtivos   Int        @default(0)
+
+  // ── Controle financeiro ─────────────────────────────────────
+  status           String     @default("PAGO")     // PAGO | ATRASADO
+  ultimoPagamento  DateTime?                        // data do último pagamento recebido
+  dataVencimento   DateTime?                        // próximo vencimento da assinatura
+
+  // ── Controle de acesso e ciclo de vida ──────────────────────
+  // isTrial: cliente ativou por período de teste, sem cobrança ainda
+  isTrial          Boolean    @default(false)
+
+  // Dias extras de acesso após o vencimento (cortesia antes de bloquear)
+  diasCortesia     Int        @default(0)
+
+  // Admin pode bloquear manualmente (ex: inadimplência) sem soft-delete
+  bloqueioManual   Boolean    @default(false)
+
+  // ── Soft-delete ─────────────────────────────────────────────
+  // ativo = false → sai das listagens normais, mas dados preservados
+  ativo            Boolean    @default(true)
+  deletedAt        DateTime?  // preenchido ao desativar — timestamp de auditoria
+
+  criadoEm         DateTime   @default(now())
+
+  // ── Relacionamentos ─────────────────────────────────────────
+  pf               ClientePF?   // dados de pessoa física (1:1)
+  pj               ClientePJ?   // dados de pessoa jurídica (1:1)
+  enderecos        Endereco[]   // endereços do cliente (1:N)
+  dispositivos     Licenca[]    // dispositivos com licença ativa (1:N)
+
+  planoObj         Plano?     @relation(fields: [planoId],    references: [id])
+  parceiroObj      Parceiro?  @relation(fields: [parceiroId], references: [id])
+
+  @@index([email])      // busca de duplicatas e login por email
+  @@index([ativo])      // listagem rápida do dashboard (apenas ativos)
+  @@index([deletedAt])  // filtro de soft-delete
+  @@index([parceiroId]) // listar clientes de um parceiro específico
+  @@index([planoId])    // filtrar por plano (relatórios de receita)
+  @@map("clientes")
+}
+
+
+// ============================================================
+// ENTIDADE: ClientePF
+// ============================================================
+// Extensão de Cliente para Pessoa Física.
+// Ligada ao Cliente base por FK clienteId (1:1).
+// Se Cliente.tipo = 'PF', esta tabela SEMPRE terá uma linha.
+// ============================================================
+model ClientePF {
+  id             String    @id @default(uuid())
+  clienteId      String    @unique   // 1:1 com Cliente
+
+  // Nome conforme documento oficial
+  nomeCompleto   String
+
+  // CPF somente dígitos (sem máscara) — validado pelo Zod antes de salvar
+  // Unicidade condicional: índice parcial na migration (só clientes não deletados)
+  cpf            String
+
+  rg             String?
+  dataNascimento DateTime?
+
+  cliente        Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@map("clientes_pf")
+}
+
+
+// ============================================================
+// ENTIDADE: ClientePJ
+// ============================================================
+// Extensão de Cliente para Pessoa Jurídica.
+// Ligada ao Cliente base por FK clienteId (1:1).
+// Se Cliente.tipo = 'PJ', esta tabela SEMPRE terá uma linha.
+// ============================================================
+model ClientePJ {
+  id                String  @id @default(uuid())
+  clienteId         String  @unique   // 1:1 com Cliente
+
+  // Razão social conforme CNPJ na Receita Federal
+  razaoSocial       String
+
+  // CNPJ somente dígitos (sem máscara) — validado pelo Zod antes de salvar
+  // Unicidade condicional: índice parcial na migration (só clientes não deletados)
+  cnpj              String
+
+  nomeFantasia      String?
+  inscricaoEstadual String?
+
+  // Nome do responsável legal ou sócio principal
+  responsavel       String?
+
+  cliente           Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@map("clientes_pj")
+}
+
+
+// ============================================================
+// ENTIDADE: Endereco
+// ============================================================
+// Endereço vinculado a um Cliente. Um cliente pode ter vários
+// endereços (matriz, filial, cobrança, entrega).
+//
+// tipo define a finalidade:
+//   PRINCIPAL → endereço principal da empresa/pessoa
+//   FILIAL    → unidade secundária
+//   COBRANCA  → endereço para envio de boleto/nota fiscal
+//   ENTREGA   → endereço de entrega de equipamentos
+// ============================================================
+model Endereco {
+  id           String   @id @default(uuid())
+  clienteId    String
+
+  cep          String
+  logradouro   String
+  numero       String
+  complemento  String?
+  bairro       String
+  cidade       String
+  estado       String   // sigla UF (2 letras): CE, SP, RJ...
+
+  tipo         String   @default("PRINCIPAL")
+  criadoEm     DateTime @default(now())
+
+  cliente      Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@map("enderecos")
+}
+
+
+// ============================================================
+// ENTIDADE: Licenca (Núcleo do Módulo de Dispositivos)
+// ============================================================
+// Representa UM dispositivo autorizado a usar o software do cliente.
+//
+// CICLO DE VIDA DE UMA LICENÇA:
+//   1. Gerada pelo sistema (status: AGUARDANDO)
+//      → chaveAtivacao é criada, hwid ainda é null
+//
+//   2. Cliente instala o software e insere a chave
+//      → software envia chaveAtivacao + hwid do dispositivo
+//      → sistema grava o hwid e muda status para ATIVA
+//
+//   3. A cada início de sessão, o software faz um "heartbeat"
+//      → sistema atualiza ultimoHeartbeat
+//      → se heartbeat parar, dispositivo pode estar offline ou violado
+//
+//   4. Admin pode SUSPENDER (acesso bloqueado temporariamente)
+//      ou REVOGAR (chave inválida permanentemente)
+//
+// RELAÇÃO COM Cliente.licencas (Int):
+//   Cliente.licencas    = quantidade de slots comprados (ex: 5)
+//   dispositivos.length = quantidade de licenças emitidas/ativadas
+//   Se dispositivos.length >= Cliente.licencas → não pode emitir novas chaves
+//
+// STATUS POSSÍVEIS:
+//   AGUARDANDO   → chave gerada, aguardando ativação pelo dispositivo
+//   ATIVA        → dispositivo ativado e com acesso liberado
+//   SUSPENSA     → acesso temporariamente bloqueado (mantém o hwid)
+//   REVOGADA     → chave inválida permanentemente (ex: fraude, perda)
+// ============================================================
+model Licenca {
+  id               String   @id @default(uuid())
+
+  // Cliente dono desta licença
+  clienteId        String
+
+  // Parceiro que vendeu/gerencia esta licença (opcional)
+  parceiroId       String?
+
+  // Chave de ativação única entregue ao cliente (formato livre: "XXXX-XXXX-XXXX-XXXX")
+  // Indexada com @unique para busca instantânea na ativação
+  chaveAtivacao    String   @unique
+
+  // Hardware ID do dispositivo que ativou a chave.
+  // null = ainda não ativada. Preenchido pelo software no momento da ativação.
+  hwidAutorizado   String?
+
+  // Nome amigável do dispositivo (ex: "Caixa 01 - Loja Centro")
+  // Pode ser definido pelo cliente no painel ou pelo software durante ativação
+  nomeDispositivo  String?
+
+  // Estado atual da licença — veja ciclo de vida acima
+  status           String   @default("AGUARDANDO")
+
+  // Última vez que o software fez contato com o servidor (heartbeat)
+  // Usado para detectar dispositivos offline ou com software desatualizado
+  ultimoHeartbeat  DateTime?
+
+  // Data em que a chave foi gerada (mesmo antes de ser ativada)
+  criadoEm         DateTime @default(now())
+
+  // Data em que o dispositivo realizou a primeira ativação
+  dataAtivacao     DateTime?
+
+  // De onde veio esta chave: "MANUAL" (admin), "PARCEIRO", "TRIAL", etc.
+  // Útil para rastrear a origem e calcular comissões
+  chaveOrigem      String   @default("MANUAL")
+
+  cliente          Cliente  @relation(fields: [clienteId],  references: [id])
+  parceiro         Parceiro? @relation(fields: [parceiroId], references: [id])
+
+  @@index([clienteId])      // listar todos os dispositivos de um cliente
+  @@index([hwidAutorizado]) // busca rápida na validação de heartbeat
+  @@index([status])         // filtrar licenças por estado (dashboard de dispositivos)
+  @@map("licencas")
+}
+
+
+// ============================================================
+// ENTIDADE: Log (Trilha de Auditoria)
+// ============================================================
+// Registro imutável de TODAS as ações realizadas no sistema.
+// Não tem soft-delete — logs nunca são apagados.
+//
+// QUANDO USAR:
+//   - Sempre que um registro for criado, editado ou deletado
+//   - Ao fazer login/logout
+//   - Ao emitir ou revogar uma licença
+//   - Ao bloquear manualmente um cliente
+//
+// entidadeNome = qual tabela foi afetada (ex: "clientes", "licencas")
+// entidadeId   = o ID do registro afetado (para rastreabilidade)
+//
+// acao valores sugeridos:
+//   CRIACAO | EDICAO | DELECAO | LOGIN | LOGOUT |
+//   EMISSAO_CHAVE | REVOGACAO_CHAVE | BLOQUEIO_MANUAL
+// ============================================================
+model Log {
+  id           String   @id @default(uuid())
+
+  // Timestamp exato da ação — indexado para consultas por período
+  dataHora     DateTime @default(now())
+
+  // Quem fez a ação (null = ação do sistema, sem usuário autenticado)
+  usuarioId    String?
+
+  // Verbo da ação — o QUE aconteceu
+  acao         String
+
+  // Em qual entidade (tabela) a ação ocorreu
+  entidadeNome String
+
+  // ID do registro afetado (para conseguir cruzar com o dado original)
+  entidadeId   String?
+
+  // Descrição legível da ação (ex: "Cliente Alpha Ltda foi desativado")
+  descricao    String?
+
+  // IP de onde partiu a requisição — útil para detectar acessos suspeitos
+  ipAddress    String?
+
+  usuario      Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])                    // histórico de ações de um usuário
+  @@index([entidadeNome, entidadeId])     // histórico de um registro específico
+  @@index([dataHora])                     // consultas por período
+  @@map("logs")
+}

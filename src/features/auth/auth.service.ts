@@ -40,6 +40,6 @@ export async function authenticateUser({ email, senha }: LoginInput) {
   // 5. RETORNO: Devolve o crachá (token) e os dados básicos do usuário
   return {
     token,
-    user: { id: user.id, email: user.email },
+    user: { id: user.id, nome: user.nome,email: user.email },
   }
 }
